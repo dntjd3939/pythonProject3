@@ -4,10 +4,11 @@ import torch.nn as nn   #pytorch 신경망 모듈을 포함하는 패키지
 import torchvision.datasets as dsets    #pytorch dataset import
 import torchvision.transforms as transforms     #다양한 형태로 변환 가능
 import torch.nn.init    #tensor 초기값 입력
+from torch.optim import lr_scheduler    #scheduler import
 
 # cpu gpu 선택
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# 랜덤 시드 고정(다음에 돌렸을 때도 같은 결과 값을 얻기 위해)
+# 랜덤 시드 고정(항상 같은 결과 값을 얻기 위해)
 torch.manual_seed(777)
 if device == 'cuda':
     torch.cuda.manual_seed_all(777)
@@ -60,14 +61,24 @@ class CNN(nn.Module):
             nn.ReLU(),      #ReLU 활성화 함수 사용
             nn.MaxPool2d(2)  #맥스풀링(kernel_size=2, stride=2)
         )
-        # 전결합층 7x7x64 inputs -> 10 outputs
-        self.fc = nn.Linear(7 * 7 * 64, 10, bias=True)
+        # 세번째층
+        # ImgIn shape=(?, 7, 7, 64)
+        #    Conv      ->(?, 7, 7, 128)
+        #    Pool      ->(?, 4, 4, 128)
+        self.layer3 = torch.nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),  #합성곱(in_channel = 64, out_channel = 128, kernel_size=3, stride=1, padding=1)
+            nn.ReLU(),      #ReLU 활성화 함수 사용
+            nn.MaxPool2d(2)  #맥스풀링(kernel_size=2, stride=2)
+        )
+        # 전결합층 4x4x128 inputs -> 10 outputs
+        self.fc = nn.Linear(4 * 4 * 128, 10, bias=True)
         # 전결합층 한정으로 가중치 초기화
         torch.nn.init.xavier_uniform_(self.fc.weight)
 
     def forward(self, x):   #순전파 정의
         out = self.layer1(x) #x가 layer1 통과
         out = self.layer2(out) #통과한 out이 layer2 통과
+        out = self.layer3(out) #통과한 out이 layer3 통과
         out = out.view(out.size(0), -1)  # 전결합층을 위해 flatten
         out = self.fc(out)  #전결합층 통과
         return out
@@ -79,6 +90,8 @@ model = CNN().to(device)
 criterion = nn.CrossEntropyLoss().to(device)
 #optimizer 정의
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+#StepLR scheduler 정의
+scheduler = lr_scheduler.StepLR(optimizer, step_size=6, gamma=0.4)
 
 # training
 total_batch = len(data_loader)      # 전체의 배치 수 확인
@@ -97,13 +110,14 @@ for epoch in range(training_epochs):
         hypothesis = model(X)   #입력 데이터에 대한 예측값 계산
 
         cost = criterion(hypothesis, Y)  # 모델의 예측값과 실제값 간의 손실(loss)을 계산
-        cost.backward()  # 모델의 파라미터에 대한 기울기(gradient)를 계산
+        cost.backward()  # 모델의 파라미터에 대한 gradient를 계산
         optimizer.step()  # 기울기 값을 이용하여 최적화 함수가 구현한 알고리즘에 따라 모델의 파라미터를 업데이트
-
 
         avg_cost += cost / total_batch  #average cost 계산
 
-    print('[Epoch:{}] cost = {}'.format(epoch+1, avg_cost))
+    scheduler.step()    #step_size 마다 학습률을 조정함.
+
+    print('[Epoch:{}], cost = {}, Learning Rate: {}'.format(epoch+1, avg_cost, scheduler.optimizer.state_dict()['param_groups'][0]['lr']))
 print('Learning Finished!')
 
 
